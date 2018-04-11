@@ -2,7 +2,7 @@
 % goal: extract cos correlation features from all patients
 disp('extracting features')
 clear all
-cd ../../LAB ;
+cd ../../Research ;
 
 TME_filepath='TMA_Core_Files';
 allTME=dir(TME_filepath);
@@ -33,6 +33,12 @@ for i=1:1:height(pat_table)
        continue 
    end
    
+   if length(bm_data(:,1))<100
+       pat_table(cellstr(name),:)=[];
+       nocells=nocells+1;
+       continue
+   end
+   
    bmarkers=cellstr(bm_names);
    cellInds=1:4:length(bmarkers);
    %only use biomarkers at the cell level
@@ -52,18 +58,23 @@ end
 features(:,k:end)=[];
 features=features';
 labels=pat_table.stage_sumajc;
+survival_time=pat_table.survtime_days;
 DNEcount
 nan_count
 
-cd ../MachineLearning/Project ;
+cd ../MLproject ;
 save('features.mat','features');
 save('labels.mat','labels');
 save('pat_table.mat','pat_table');
+save('survival_time.mat','survival_time');
+
+cd code
 
 %% SPLIT FEATURES TO TEST/TRAIN FEATURES
 %goal: 20% test data, 80% training data
 %features: patients x features
 %labels: patients x 1
+cd ../
 load features.mat
 load labels.mat
 
@@ -117,18 +128,23 @@ avg_test_acc=mean(test_acc)
 %% GET NEIGHBORHOOD CELL FEATURES FOR A RANDOM PATIENT
 load pat_table.mat
 
-cd ../../LAB ;
+cd ../Research ;
 filepath='TMA_Core_Files';
 
-
 num_pat=height(pat_table);
-pat_num=randi([1 num_pat],1);
-name=char(pat_table(pat_num,:).spot_name);
-fname=fullfile(TME_filepath,strcat(name,'.mat'));
-load(fname);
-num_cells=length(bm_data(:,1));
+cell_thres=500;
+num_cells=0;
+while num_cells<cell_thres
+    pat_num=randsample([1:1:num_pat],1);
+    name=char(pat_table(pat_num,:).spot_name);
+    fname=fullfile(filepath,strcat(name,'.mat'));
+    load(fname);
+    num_cells=length(bm_data(:,1));
+    if num_cells<cell_thres
+        continue
+    end
 
-h=100;
+h=75;
 num_features=1540;
 cell_features=zeros(num_cells,num_features);
 nan_count=0;
@@ -157,26 +173,35 @@ for j=1:1:num_cells
     cell_features(k,:)=cells_corr;
     k=k+1;
 end
+num_cells=length(cell_features(:,1));
+
+end
 cell_features(k:end,:)=[];
 x(delcells)=[];
 y(delcells)=[];
 labels=pat_table.stage_sumajc;
 stage=labels(pat_num);
 nan_count
+num_cells
 
-cd ../MachineLearning/Project
+cd ../MLproject
+save('pat_index.mat','pat_num');
 save('patient_name.mat','name');
-save('cell_features.mat','cell_features');
+save('patient_cell_features.mat','cell_features');
 save('pat_stage.mat','stage');
 save('pat_x.mat','x');
 save('pat_y.mat','y');
 
 %% PREDICT STAGE BASED ON CELL FEATURES AND PLOT ACCORDING TO LOCATION 
 
-load cell_features.mat
+load pat_index.mat
+load patient_cell_features.mat
 load pat_stage.mat
 load pat_x.mat
 load pat_y.mat
+load patient_name.mat
+load TSNE_points.mat
+load labels.mat
 
 pred=zeros(length(cell_features(:,1)),length(model.Trained));
 for i=1:1:length(model.Trained)
@@ -185,5 +210,14 @@ for i=1:1:length(model.Trained)
 end
 predictions=round(mean(pred,2));
 c=[1 0 0;0 1 0;0 0 1];
-stage
-scatter(x',y',[],c(predictions,:))
+figure;
+scatter(x',y',[],c(predictions,:),'filled')
+name=strrep(name, '_',' ');
+t=strcat(name, ' - stage ');
+t=strcat(t, num2str(stage));
+title(t);
+
+figure;
+scatter(TSNE_points(:,1),TSNE_points(:,2),[],c(labels,:) , 'filled')
+hold on
+plot(TSNE_points(pat_num,1),TSNE_points(pat_num,2),'ko','MarkerSize',12)
